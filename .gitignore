@@ -1,0 +1,4 @@
+config.env
+snatched.json
+*.log
+__pycache__/

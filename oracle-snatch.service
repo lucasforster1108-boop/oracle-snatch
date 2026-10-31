@@ -1,0 +1,16 @@
+[Unit]
+Description=oracle-snatch - grab a free OCI A1.Flex instance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/oracle-snatch
+ExecStart=/usr/bin/python3 /opt/oracle-snatch/snatch.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/opt/oracle-snatch/snatch.log
+StandardError=append:/opt/oracle-snatch/snatch.log
+
+[Install]
+WantedBy=multi-user.target
