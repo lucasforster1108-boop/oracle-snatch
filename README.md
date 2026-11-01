@@ -1,3 +1,5 @@
+**中文** | [English](README.en.md)
+
 # oracle-snatch
 
 一个小的 Python 循环脚本：不停用甲骨文云的官方接口申请免费 ARM 实例（VM.Standard.A1.Flex），直到哪次赶上放货、接口点头为止。
