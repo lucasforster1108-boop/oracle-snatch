@@ -1,4 +1,4 @@
-**中文** | [English](README.en.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
+**中文** | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
 # oracle-snatch
 
