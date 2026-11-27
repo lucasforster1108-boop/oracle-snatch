@@ -2,6 +2,8 @@
 
 # oracle-snatch
 
+![GitHub stars](https://img.shields.io/github/stars/lucasforster1108-boop/oracle-snatch) ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+
 一个小的 Python 循环脚本：不停用甲骨文云的官方接口申请免费 ARM 实例（VM.Standard.A1.Flex），直到哪次赶上放货、接口点头为止。
 
 ## 为什么写这个
@@ -10,6 +12,8 @@ Always Free 的 A1.Flex 免费额度（总共 4 核 / 24 GB）是目前最划算
 
 2026 年 10 月我用一个粗糙版本在东京区域跑了好几天。日志翻来覆去就是「没货」，中间还因为我把间隔设得太密、吃过几次 429 限流。最后抢到了那台 4 核 24 GB 的机器，我现在自托管的大部分服务都跑在它上面，到今天账单还是 0。这个仓库就是那个循环的整理版，配置都抽了出来。
 
+后来我把这段经历发到 X 上，帖子有 31,885 次浏览、470 人收藏——看来被「没货」折磨的人远不止我一个。
+
 ## 它做什么
 
 - 只用甲骨文官方 API（Python 的 `oci` SDK），不搞控制台自动化、不模拟浏览器。
@@ -17,7 +21,8 @@ Always Free 的 A1.Flex 免费额度（总共 4 核 / 24 GB）是目前最划算
 - 「没货」就当「还没到时候」：歇一会儿，下一个 AD，下一轮。
 - 遇到 429 限流就长退避（默认 300 秒）。硬顶着 429 往前冲，只会让限流赖着不走。
 - 遇到配额错误（LimitExceeded）直接停，并把原因写清楚：这说明你的免费额度已经用完了，再重试一万次也没用。
-- 抢到后等实例变成 RUNNING，拿到公网 IP，写进 `snatched.json`，可选发一条 Telegram 通知，然后退出。
+- 抢到后等实例变成 RUNNING，拿到公网 IP，写进 `snatched.json`，发一条通知，然后按 `TARGET_COUNT` 决定是退出还是接着抢下一台（默认 1 台；设成 2 再配上 2 核 / 12 GB，就是一次抢两台小的）。
+- 通知不止 Telegram：设了 `WEBHOOK_URL` 还会往通用 Webhook 发一条 JSON，Bark、Server酱、企业微信机器人都能接。子网支持 IPv6 的话，打开 `ASSIGN_IPV6_IP` 还能给实例分配 IPv6 地址。
 - `--dry-run` 只验证配置：列出可用域、确认会用哪个镜像，不真开机器。第一次先跑这个。
 
 它不做的事：不帮你注册账号、不建 VCN、不生成 API 密钥，更变不出不存在的货。它只是替你不知疲倦地问。

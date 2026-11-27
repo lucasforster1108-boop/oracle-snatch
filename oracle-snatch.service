@@ -4,6 +4,8 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# Note: output is appended to snatch.log below and grows unbounded —
+# rotate it (e.g. with logrotate) if you run this for weeks.
 Type=simple
 WorkingDirectory=/opt/oracle-snatch
 ExecStart=/usr/bin/python3 /opt/oracle-snatch/snatch.py

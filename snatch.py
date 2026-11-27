@@ -5,8 +5,8 @@ Oracle's free ARM instances are almost always "out of capacity" in popular
 regions. Capacity comes back in small bursts, so a patient loop that retries
 through the official API will land one eventually. This script is that loop,
 cleaned up: it rotates through every availability domain in the region,
-backs off properly on HTTP 429, stops for good on quota errors, and exits
-the moment an instance is created.
+backs off properly on HTTP 429, stops for good on quota errors, and keeps
+going until it has snatched TARGET_COUNT instances (default 1).
 
 Only the official OCI API is used (the `oci` Python SDK). Nothing here
 touches the console, fingerprints, or rate limits beyond backing off.
@@ -81,6 +81,28 @@ def notify_telegram(token, chat_id, text):
         log(f"Telegram notify failed: {exc}")
 
 
+def notify_webhook(url, text):
+    """POST a small JSON payload to a generic webhook (Bark, ServerChan,
+    WeCom, Slack-style endpoints, ...). Best-effort, like Telegram."""
+    if not url:
+        return
+    try:
+        data = json.dumps({"title": "oracle-snatch", "text": text}).encode()
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=15)
+    except Exception as exc:  # notification is best-effort, never crash the loop
+        log(f"Webhook notify failed: {exc}")
+
+
+def notify(cfg, text):
+    notify_telegram(cfg["tg_token"], cfg["tg_chat_id"], text)
+    notify_webhook(cfg["webhook_url"], text)
+
+
 def resolve_image(compute, compartment_id, image_id):
     """Use the configured image, else pick the newest Canonical Ubuntu ARM64 image."""
     if image_id:
@@ -97,9 +119,9 @@ def resolve_image(compute, compartment_id, image_id):
     return images[0]
 
 
-def build_launch_details(cfg, ad_name, image_id, ssh_key_text):
+def build_launch_details(cfg, ad_name, image_id, ssh_key_text, display_name=None):
     return oci.core.models.LaunchInstanceDetails(
-        display_name=cfg["display_name"],
+        display_name=display_name or cfg["display_name"],
         compartment_id=cfg["compartment_id"],
         availability_domain=ad_name,
         shape=SHAPE,
@@ -110,7 +132,7 @@ def build_launch_details(cfg, ad_name, image_id, ssh_key_text):
         create_vnic_details=oci.core.models.CreateVnicDetails(
             subnet_id=cfg["subnet_id"],
             assign_public_ip=True,
-            assign_ipv6_ip=False,
+            assign_ipv6_ip=cfg["assign_ipv6_ip"],
         ),
         source_details=oci.core.models.InstanceSourceViaImageDetails(
             image_id=image_id,
@@ -164,6 +186,10 @@ def main():
         "oci_profile": get_setting(file_cfg, "OCI_PROFILE", "DEFAULT"),
         "tg_token": get_setting(file_cfg, "TG_BOT_TOKEN"),
         "tg_chat_id": get_setting(file_cfg, "TG_CHAT_ID"),
+        "webhook_url": get_setting(file_cfg, "WEBHOOK_URL"),
+        "target_count": max(1, int(get_setting(file_cfg, "TARGET_COUNT", "1"))),
+        "assign_ipv6_ip": (get_setting(file_cfg, "ASSIGN_IPV6_IP", "false")
+                           .strip().lower() in ("1", "true", "yes", "on")),
     }
     key_path = os.path.expanduser(get_setting(
         file_cfg, "SSH_PUBLIC_KEY_FILE", "~/.ssh/id_ed25519.pub"))
@@ -185,17 +211,28 @@ def main():
     log(f"Region ADs: {', '.join(ads)}")
     log(f"Image: {image.display_name} ({image.id})")
     log(f"Target: {SHAPE} {cfg['ocpus']:g} OCPU / {cfg['memory_gb']:g} GB, "
-        f"boot {cfg['boot_volume_gb']} GB, name '{cfg['display_name']}'")
+        f"boot {cfg['boot_volume_gb']} GB, name '{cfg['display_name']}', "
+        f"count {cfg['target_count']}")
 
     if args.dry_run:
         log("Dry run OK. Nothing was launched.")
         return 0
 
     attempt = 0
-    while True:
+    results = []
+    while len(results) < cfg["target_count"]:
+        rate_limited = False
         for ad in ads:
+            if len(results) >= cfg["target_count"]:
+                break
             attempt += 1
-            details = build_launch_details(cfg, ad, image.id, ssh_key_text)
+            # First instance keeps the plain name; later ones get -2, -3, ...
+            if results:
+                name = f"{cfg['display_name']}-{len(results) + 1}"
+            else:
+                name = cfg["display_name"]
+            details = build_launch_details(cfg, ad, image.id, ssh_key_text,
+                                           display_name=name)
             try:
                 resp = compute.launch_instance(details)
                 instance = resp.data
@@ -203,7 +240,7 @@ def main():
                     f"({instance.lifecycle_state})")
                 ip = wait_for_public_ip(
                     compute, network, cfg["compartment_id"], instance.id)
-                result = {
+                results.append({
                     "instance_id": instance.id,
                     "display_name": instance.display_name,
                     "availability_domain": ad,
@@ -212,29 +249,39 @@ def main():
                     "memory_gb": cfg["memory_gb"],
                     "public_ip": ip,
                     "created_at": datetime.now().isoformat(timespec="seconds"),
-                }
+                })
                 with open(RESULT_FILE, "w", encoding="utf-8") as f:
-                    json.dump(result, f, indent=2)
-                log(f"Public IP: {ip}. Details saved to {RESULT_FILE}")
-                notify_telegram(cfg["tg_token"], cfg["tg_chat_id"],
-                                f"oracle-snatch: got one in {ad}, IP {ip}")
-                return 0
+                    json.dump({"target_count": cfg["target_count"],
+                               "snatched": len(results),
+                               "instances": results}, f, indent=2)
+                log(f"Public IP: {ip}. Details saved to {RESULT_FILE} "
+                    f"({len(results)}/{cfg['target_count']})")
+                notify(cfg, f"oracle-snatch: got {len(results)}/"
+                            f"{cfg['target_count']} in {ad}, IP {ip}")
+                break  # start a fresh round for the next instance
             except ServiceError as exc:
                 message = (exc.message or "")
+                lowered = message.lower()
+                limit_reached = (
+                    exc.code in ("LimitExceeded", "QuotaExceeded")
+                    or ("limit" in lowered and "exceeded" in lowered)
+                )
                 if exc.status == 429:
                     log(f"[{ad}] rate limited (429), sleeping "
-                        f"{cfg['rate_limit_sleep']}s")
+                        f"{cfg['rate_limit_sleep']}s, then next round")
                     time.sleep(cfg["rate_limit_sleep"])
-                elif "capacity" in message.lower():
+                    rate_limited = True
+                    break  # backing off means this round is over
+                elif "capacity" in lowered:
                     log(f"[{ad}] out of capacity (attempt {attempt}), moving on")
-                elif exc.code in ("LimitExceeded", "QuotaExceeded") or \
-                        "limit" in message.lower() and "exceeded" in message.lower():
+                elif limit_reached:
                     log(f"[{ad}] free-tier limit reached: {message}")
                     log("Your Always Free A1 allowance (4 OCPU / 24 GB total) "
                         "is probably already in use. Stopping.")
-                    notify_telegram(cfg["tg_token"], cfg["tg_chat_id"],
-                                    "oracle-snatch: stopped, free-tier limit reached")
-                    return 1
+                    notify(cfg, f"oracle-snatch: stopped, free-tier limit "
+                                f"reached ({len(results)}/"
+                                f"{cfg['target_count']} snatched)")
+                    return 0 if results else 1
                 elif exc.status in (401, 403, 404):
                     log(f"[{ad}] config problem ({exc.status} {exc.code}): {message}")
                     log("Check SUBNET_ID / COMPARTMENT_ID / IMAGE_ID and your "
@@ -244,8 +291,14 @@ def main():
                     log(f"[{ad}] {exc.status} {exc.code}: {message} "
                         f"(attempt {attempt}), moving on")
             time.sleep(5)
-        log(f"Full round done, no capacity anywhere. Sleeping {cfg['interval']}s")
+        if len(results) >= cfg["target_count"]:
+            break
+        if not rate_limited:
+            log(f"Full round done, no capacity anywhere. "
+                f"Sleeping {cfg['interval']}s")
         time.sleep(cfg["interval"])
+    log(f"Done: snatched {len(results)}/{cfg['target_count']} instance(s).")
+    return 0
 
 
 if __name__ == "__main__":

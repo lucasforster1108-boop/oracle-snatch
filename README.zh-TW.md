@@ -2,6 +2,8 @@
 
 # oracle-snatch
 
+![GitHub stars](https://img.shields.io/github/stars/lucasforster1108-boop/oracle-snatch) ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+
 一個小的 Python 迴圈指令碼：不停用甲骨文雲的官方介面申請免費 ARM 例項（VM.Standard.A1.Flex），直到哪次趕上放貨、介面點頭為止。
 
 ## 為什麼寫這個
@@ -10,6 +12,8 @@ Always Free 的 A1.Flex 免費額度（總共 4 核 / 24 GB）是目前最划算
 
 2026 年 10 月我用一個粗糙版本在東京區域跑了好幾天。日誌翻來覆去就是「沒貨」，中間還因為我把間隔設得太密、吃過幾次 429 限流。最後搶到了那臺 4 核 24 GB 的機器，我現在自託管的大部分服務都跑在它上面，到今天賬單還是 0。這個倉庫就是那個迴圈的整理版，配置都抽了出來。
 
+後來我把這段經歷發到 X 上，帖子有 31,885 次瀏覽、470 人收藏——看來被「沒貨」折磨的人遠不止我一個。
+
 ## 它做什麼
 
 - 只用甲骨文官方 API（Python 的 `oci` SDK），不搞控制檯自動化、不模擬瀏覽器。
@@ -17,7 +21,8 @@ Always Free 的 A1.Flex 免費額度（總共 4 核 / 24 GB）是目前最划算
 - 「沒貨」就當「還沒到時候」：歇一會兒，下一個 AD，下一輪。
 - 遇到 429 限流就長退避（預設 300 秒）。硬頂著 429 往前衝，只會讓限流賴著不走。
 - 遇到配額錯誤（LimitExceeded）直接停，並把原因寫清楚：這說明你的免費額度已經用完了，再重試一萬次也沒用。
-- 搶到後等例項變成 RUNNING，拿到公網 IP，寫進 `snatched.json`，可選發一條 Telegram 通知，然後退出。
+- 搶到後等例項變成 RUNNING，拿到公網 IP，寫進 `snatched.json`，發一條通知，然後按 `TARGET_COUNT` 決定是退出還是接著搶下一臺（預設 1 臺；設成 2 再配上 2 核 / 12 GB，就是一次搶兩臺小的）。
+- 通知不止 Telegram：設了 `WEBHOOK_URL` 還會往通用 Webhook 發一條 JSON，Bark、Server醬、企業微信機器人都能接。子網支援 IPv6 的話，打開 `ASSIGN_IPV6_IP` 還能給例項分配 IPv6 地址。
 - `--dry-run` 只驗證配置：列出可用域、確認會用哪個映象，不真開機器。第一次先跑這個。
 
 它不做的事：不幫你註冊賬號、不建 VCN、不生成 API 金鑰，更變不出不存在的貨。它只是替你不知疲倦地問。

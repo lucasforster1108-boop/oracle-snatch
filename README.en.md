@@ -2,6 +2,8 @@
 
 # oracle-snatch
 
+![GitHub stars](https://img.shields.io/github/stars/lucasforster1108-boop/oracle-snatch) ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+
 A small Python loop that keeps asking Oracle Cloud's official API for a free ARM instance (VM.Standard.A1.Flex) until one attempt happens to land when capacity opens up and the API says yes.
 
 ## Why I wrote this
@@ -10,6 +12,8 @@ The Always Free A1.Flex allowance (4 cores / 24 GB in total) is the best free se
 
 In October 2026 I ran a rough version of this loop in the Tokyo region for several days. The log was just "out of capacity" over and over, plus a few 429 rate limits when I set the interval too aggressively. Eventually it grabbed that 4-core / 24 GB machine. Most of my self-hosted services run on it now, and the bill is still 0 to this day. This repo is that loop, cleaned up, with all config pulled out into a file.
 
+I later posted this story on X — the post got 31,885 views and 470 bookmarks. Turns out I am far from the only one tortured by "out of capacity".
+
 ## What it does
 
 - Uses only Oracle's official API (the `oci` Python SDK). No console automation, no browser simulation.
@@ -17,7 +21,8 @@ In October 2026 I ran a rough version of this loop in the Tokyo region for sever
 - Treats "out of capacity" as "not yet": waits a bit, moves to the next AD, starts the next round.
 - Backs off long (300 seconds by default) on a 429. Ramming through a rate limit only makes it stick around longer.
 - Stops on quota errors (LimitExceeded) and tells you why: your free allowance is used up, and retrying ten thousand more times will not change that.
-- Once it wins, waits for the instance to reach RUNNING, grabs the public IP, writes it to `snatched.json`, optionally sends a Telegram notification, and exits.
+- Once it wins, waits for the instance to reach RUNNING, grabs the public IP, writes it to `snatched.json`, sends a notification, then either exits or keeps going for the next one, depending on `TARGET_COUNT` (default 1; set it to 2 with a 2-core / 12 GB config to grab two smaller boxes in one run).
+- Notifications are not just Telegram: set `WEBHOOK_URL` and it also POSTs a JSON payload to any generic webhook — Bark, ServerChan, WeCom group bots and the like. On an IPv6-enabled subnet, turn on `ASSIGN_IPV6_IP` to get an IPv6 address assigned too.
 - `--dry-run` only validates your setup: lists the ADs and confirms which image it would use, without launching anything. Run this first.
 
 What it does not do: it will not register an account for you, build a VCN, generate API keys, or conjure capacity that does not exist. It just asks, tirelessly, on your behalf.
